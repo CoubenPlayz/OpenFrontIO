@@ -147,38 +147,54 @@ ctx.addEventListener("message", async (e: MessageEvent<MainThreadMessage>) => {
   const message = e.data;
 
   switch (message.type) {
-    case "init":
-      try {
-        // Set before createGameRunner so map fetches via mapLoader pick up the
-        // CDN base. Workers have no `window`, so AssetUrls falls back to this.
-        globalThis.__CDN_BASE__ = message.cdnBase;
-        gameRunner = (
-          message.snapshot !== undefined
-            ? createGameRunnerFromSnapshot(
-                message.gameStartInfo,
-                message.snapshot,
-                message.clientID,
-                mapLoader,
-                gameUpdate,
-              )
-            : createGameRunner(
-                message.gameStartInfo,
-                message.clientID,
-                mapLoader,
-                gameUpdate,
-              )
-        ).then((gr) => {
-          sendMessage({
-            type: "initialized",
-            id: message.id,
-          } as InitializedMessage);
-          return gr;
-        });
-      } catch (error) {
-        console.error("Failed to initialize game runner:", error);
-        throw error;
-      }
-      break;
+case "init":
+  // Set before createGameRunner so map fetches via mapLoader pick up the
+  // CDN base. Workers have no `window`, so AssetUrls falls back to this.
+  globalThis.__CDN_BASE__ = message.cdnBase;
+
+  gameRunner = (
+    message.snapshot !== undefined
+      ? createGameRunnerFromSnapshot(
+          message.gameStartInfo,
+          message.snapshot,
+          message.clientID,
+          mapLoader,
+          gameUpdate,
+        )
+      : createGameRunner(
+          message.gameStartInfo,
+          message.clientID,
+          mapLoader,
+          gameUpdate,
+        )
+  )
+    .then((gr) => {
+      sendMessage({
+        type: "initialized",
+        id: message.id,
+      } as InitializedMessage);
+
+      return gr;
+    })
+    .catch((error) => {
+      console.error("Failed to initialize game runner:", error);
+
+      // Send the actual initialization error back to the main thread
+      // instead of leaving WorkerClient waiting for 60 seconds.
+      sendMessage({
+        type: "game_error",
+        error: {
+          errMsg:
+            error instanceof Error
+              ? `Worker initialization failed: ${error.message}`
+              : `Worker initialization failed: ${String(error)}`,
+        },
+      } as WorkerMessage);
+
+      throw error;
+    });
+
+  break;
 
     case "turn":
       if (!gameRunner) {
